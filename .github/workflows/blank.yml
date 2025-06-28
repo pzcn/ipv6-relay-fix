@@ -2,11 +2,11 @@ name: Build IPv6 Relay Fix IPK (ARM Cortex-A53)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ master ]
     paths:
       - 'package/network/ipv6/ipv6-relay-fix/**'
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
     paths:
       - 'package/network/ipv6/ipv6-relay-fix/**'
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
         
     - name: Cache OpenWrt source
       id: cache-openwrt
-      uses: actions/cache@v3
+      uses: actions/cache@v4  # 同时更新cache action到v4
       with:
         path: openwrt
         key: openwrt-master-aarch64-cortex-a53-${{ hashFiles('package/network/ipv6/ipv6-relay-fix/**') }}
@@ -142,29 +142,23 @@ jobs:
         uci set ipv6-relay-fix.global.enabled='1'
         uci commit ipv6-relay-fix
         /etc/init.d/ipv6-relay-fix restart
-        
-        📋 Compatible devices:
-        - Pine64 Plus A64
-        - Orange Pi series (A64/H5)
-        - Banana Pi M64
-        - NanoPi A64
-        - Other ARM Cortex-A53 based devices
         EOF
         
         echo "✅ Package built successfully: $PACKAGE_NAME"
         
     - name: Upload package artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4  # 更新到v4版本
       with:
-        name: ipv6-relay-fix-aarch64-cortex-a53
+        name: ipv6-relay-fix-aarch64-cortex-a53-${{ github.run_number }}  # 添加唯一标识符
         path: |
           openwrt/${{ steps.package.outputs.package_path }}
           openwrt/package_info.txt
         retention-days: 30
+        compression-level: 6  # v4新特性：自定义压缩级别
         
     - name: Create release on tag
       if: startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2  # 同时更新到最新版本
       with:
         files: |
           openwrt/${{ steps.package.outputs.package_path }}
