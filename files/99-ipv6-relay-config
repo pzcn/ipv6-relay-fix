@@ -1,0 +1,94 @@
+#!/bin/sh
+
+# IPv6 Relay Mode Configuration Script
+# Automatically sets up IPv6 relay for campus networks
+
+. /lib/functions.sh
+
+# Check if already configured
+if [ "$(uci -q get ipv6-relay-fix.config.configured)" = "1" ]; then
+    echo "IPv6 relay already configured, skipping..."
+    exit 0
+fi
+
+echo "Configuring IPv6 relay mode..."
+
+# Backup original configuration
+cp /etc/config/dhcp /etc/config/dhcp.backup.$(date +%s) 2>/dev/null
+cp /etc/config/network /etc/config/network.backup.$(date +%s) 2>/dev/null
+
+# Configure LAN interface for IPv6 relay
+uci -q batch <<-EOF
+	set dhcp.lan.ra='relay'
+	set dhcp.lan.dhcpv6='relay'
+	set dhcp.lan.ndp='relay'
+	set dhcp.lan.ndproxy_routing='0'
+	delete dhcp.lan.ra_flags
+	add_list dhcp.lan.ra_flags='none'
+EOF
+
+# Ensure WAN6 interface exists
+if ! uci -q get network.wan6 >/dev/null; then
+    echo "Creating WAN6 interface..."
+    uci -q batch <<-EOF
+	set network.wan6='interface'
+	set network.wan6.proto='dhcpv6'
+	set network.wan6.device='@wan'
+	set network.wan6.reqaddress='try'
+	set network.wan6.reqprefix='auto'
+	set network.wan6.peerdns='1'
+EOF
+fi
+
+# Configure WAN6 DHCP section
+if ! uci -q get dhcp.wan6 >/dev/null; then
+    echo "Creating WAN6 DHCP section..."
+    uci -q batch <<-EOF
+	set dhcp.wan6='dhcp'
+	set dhcp.wan6.interface='wan6'
+EOF
+fi
+
+# Configure WAN6 for IPv6 relay
+uci -q batch <<-EOF
+	set dhcp.wan6.ra='relay'
+	set dhcp.wan6.dhcpv6='relay'
+	set dhcp.wan6.ndp='relay'
+	set dhcp.wan6.master='1'
+	set dhcp.wan6.ndproxy_routing='0'
+	delete dhcp.wan6.ra_flags
+	add_list dhcp.wan6.ra_flags='none'
+EOF
+
+# Configure WAN interface (ensure it doesn't interfere)
+uci -q batch <<-EOF
+	set dhcp.wan.ignore='1'
+	delete dhcp.wan.ra_flags
+	add_list dhcp.wan.ra_flags='none'
+EOF
+
+# Disable ULA prefix generation (optional, reduces confusion)
+uci -q delete network.globals.ula_prefix
+
+# Create configuration tracking
+uci -q batch <<-EOF
+	set ipv6-relay-fix.config='settings'
+	set ipv6-relay-fix.config.configured='1'
+	set ipv6-relay-fix.config.config_date='$(date)'
+	set ipv6-relay-fix.config.enabled='1'
+EOF
+
+# Commit all changes
+uci commit dhcp
+uci commit network
+uci commit ipv6-relay-fix
+
+echo "IPv6 relay configuration completed successfully!"
+echo "Configuration applied to:"
+echo "  - LAN interface: IPv6 relay mode enabled"
+echo "  - WAN6 interface: Created and configured as relay master"
+echo "  - Learning routes: Disabled (ndproxy_routing=0)"
+echo ""
+echo "Reboot recommended to ensure all changes take effect."
+
+exit 0

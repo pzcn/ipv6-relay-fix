@@ -1,0 +1,36 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=10
+
+USE_PROCD=1
+PROG="ipv6-relay-fix"
+
+start_service() {
+	config_load ipv6-relay-fix
+	
+	local enabled
+	config_get_bool enabled global enabled 0
+	[ "$enabled" -eq 0 ] && return 1
+	
+	# Check if IPv6 is available
+	[ -d /proc/sys/net/ipv6 ] || {
+		echo "IPv6 not available"
+		return 1
+	}
+	
+	# Restart network services to apply IPv6 relay config
+	/etc/init.d/odhcpd restart
+	/etc/init.d/network reload
+	
+	logger -t ipv6-relay-fix "IPv6 relay fix service started"
+}
+
+stop_service() {
+	logger -t ipv6-relay-fix "IPv6 relay fix service stopped"
+}
+
+reload_service() {
+	stop
+	start
+}
