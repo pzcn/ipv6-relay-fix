@@ -1,40 +1,19 @@
-name: Build IPv6 Relay Fix IPK
+name: Build IPv6 Relay Fix IPK (ARM Cortex-A53)
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
     paths:
       - 'package/network/ipv6/ipv6-relay-fix/**'
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
     paths:
       - 'package/network/ipv6/ipv6-relay-fix/**'
   workflow_dispatch:
-    inputs:
-      openwrt_version:
-        description: 'OpenWrt version/branch'
-        required: true
-        default: 'v23.05.2'
-        type: choice
-        options:
-          - 'v23.05.2'
-          - 'v22.03.6'
-          - 'master'
-      target_arch:
-        description: 'Target architecture'
-        required: true
-        default: 'x86_64'
-        type: choice
-        options:
-          - 'x86_64'
-          - 'aarch64_generic'
-          - 'arm_cortex-a9'
-          - 'mips_24kc'
-          - 'mipsel_24kc'
 
 env:
-  OPENWRT_VERSION: ${{ github.event.inputs.openwrt_version || 'v23.05.2' }}
-  TARGET_ARCH: ${{ github.event.inputs.target_arch || 'x86_64' }}
+  OPENWRT_VERSION: master
+  TARGET_ARCH: aarch64_cortex-a53
 
 jobs:
   build:
@@ -48,42 +27,22 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          build-essential \
-          clang \
-          flex \
-          bison \
-          g++ \
-          gawk \
-          gcc-multilib \
-          g++-multilib \
-          gettext \
-          git \
-          libncurses5-dev \
-          libssl-dev \
-          python3-distutils \
-          rsync \
-          unzip \
-          zlib1g-dev \
-          file \
-          wget \
-          subversion \
-          qemu-utils
+          build-essential clang flex bison g++ gawk \
+          gcc-multilib g++-multilib gettext git \
+          libncurses5-dev libssl-dev python3-distutils \
+          rsync unzip zlib1g-dev file wget subversion
         
     - name: Cache OpenWrt source
       id: cache-openwrt
       uses: actions/cache@v3
       with:
         path: openwrt
-        key: openwrt-${{ env.OPENWRT_VERSION }}-${{ hashFiles('.github/workflows/build-ipv6-relay-fix.yml') }}
+        key: openwrt-master-aarch64-cortex-a53-${{ hashFiles('package/network/ipv6/ipv6-relay-fix/**') }}
         
     - name: Download OpenWrt source
       if: steps.cache-openwrt.outputs.cache-hit != 'true'
       run: |
-        git clone https://github.com/openwrt/openwrt.git openwrt
-        cd openwrt
-        if [[ "${{ env.OPENWRT_VERSION }}" != "master" ]]; then
-          git checkout ${{ env.OPENWRT_VERSION }}
-        fi
+        git clone --depth 1 https://github.com/openwrt/openwrt.git openwrt
         
     - name: Update feeds
       run: |
@@ -96,165 +55,144 @@ jobs:
         mkdir -p openwrt/package/network/ipv6/
         cp -r package/network/ipv6/ipv6-relay-fix openwrt/package/network/ipv6/
         
-    - name: Generate build config
+    - name: Generate build config for ARM Cortex-A53
       run: |
         cd openwrt
-        
-        # Create minimal config for package compilation
         cat > .config << EOF
-        CONFIG_TARGET_x86=y
-        CONFIG_TARGET_x86_64=y
-        CONFIG_TARGET_x86_64_DEVICE_generic=y
+        # Target for ARM Cortex-A53 (aarch64)
+        CONFIG_TARGET_sunxi=y
+        CONFIG_TARGET_sunxi_cortexa53=y
+        CONFIG_TARGET_sunxi_cortexa53_DEVICE_sun50i-a64-pine64-plus=y
         
-        # Essential packages for IPv6
+        # IPv6 essential packages
         CONFIG_PACKAGE_odhcpd=y
         CONFIG_PACKAGE_odhcpd-ipv6only=y
         CONFIG_PACKAGE_kmod-ipv6=y
         CONFIG_PACKAGE_ip6tables=y
         
-        # Our package
+        # Our IPv6 relay fix package
         CONFIG_PACKAGE_ipv6-relay-fix=m
         
-        # IPv6 support
+        # IPv6 kernel support
         CONFIG_IPV6=y
         CONFIG_KERNEL_IPV6=y
-        EOF
         
-        # Adjust config for different architectures
-        case "${{ env.TARGET_ARCH }}" in
-          "aarch64_generic")
-            sed -i 's/CONFIG_TARGET_x86=y/CONFIG_TARGET_armvirt=y/' .config
-            sed -i 's/CONFIG_TARGET_x86_64=y/CONFIG_TARGET_armvirt_64=y/' .config
-            sed -i 's/CONFIG_TARGET_x86_64_DEVICE_generic=y/CONFIG_TARGET_armvirt_64_DEVICE_generic=y/' .config
-            ;;
-          "arm_cortex-a9")
-            sed -i 's/CONFIG_TARGET_x86=y/CONFIG_TARGET_generic=y/' .config
-            sed -i 's/CONFIG_TARGET_x86_64=y/CONFIG_TARGET_generic_DEVICE_arm_cortex-a9=y/' .config
-            sed -i '/CONFIG_TARGET_x86_64_DEVICE_generic=y/d' .config
-            ;;
-          "mips_24kc")
-            sed -i 's/CONFIG_TARGET_x86=y/CONFIG_TARGET_ath79=y/' .config
-            sed -i 's/CONFIG_TARGET_x86_64=y/CONFIG_TARGET_ath79_generic=y/' .config
-            sed -i 's/CONFIG_TARGET_x86_64_DEVICE_generic=y/CONFIG_TARGET_ath79_generic_DEVICE_glinet_gl-ar750s-nor=y/' .config
-            ;;
-        esac
+        # Basic networking
+        CONFIG_PACKAGE_dnsmasq=y
+        CONFIG_PACKAGE_firewall4=y
+        CONFIG_PACKAGE_nftables=y
+        
+        # Build system
+        CONFIG_DEVEL=y
+        CONFIG_CCACHE=y
+        EOF
         
         make defconfig
         
     - name: Download dependencies
       run: |
         cd openwrt
-        make download -j$(nproc)
+        make download -j$(nproc) || make download -j1 V=s
         
     - name: Build toolchain
       run: |
         cd openwrt
-        make toolchain/install -j$(nproc)
+        make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
         
     - name: Build package
       run: |
         cd openwrt
         make package/ipv6-relay-fix/compile -j$(nproc) V=s
         
-    - name: Find built packages
-      id: find-packages
+    - name: Find and prepare package
+      id: package
       run: |
         cd openwrt
-        PACKAGE_DIR=$(find bin -name "ipv6-relay-fix*.ipk" -type f | head -1 | xargs dirname)
-        PACKAGE_FILE=$(find bin -name "ipv6-relay-fix*.ipk" -type f | head -1 | xargs basename)
-        PACKAGE_ARCH=$(echo $PACKAGE_DIR | grep -o "packages-[^/]*" | cut -d'-' -f2)
         
+        # Find the built package
+        PACKAGE_FILE=$(find bin -name "ipv6-relay-fix*.ipk" -type f | head -1)
+        
+        if [ -z "$PACKAGE_FILE" ]; then
+          echo "❌ Package not found!"
+          find bin -name "*.ipk" | head -10
+          exit 1
+        fi
+        
+        PACKAGE_NAME=$(basename "$PACKAGE_FILE")
+        PACKAGE_DIR=$(dirname "$PACKAGE_FILE")
+        
+        echo "package_file=$PACKAGE_NAME" >> $GITHUB_OUTPUT
+        echo "package_path=$PACKAGE_FILE" >> $GITHUB_OUTPUT
         echo "package_dir=$PACKAGE_DIR" >> $GITHUB_OUTPUT
-        echo "package_file=$PACKAGE_FILE" >> $GITHUB_OUTPUT
-        echo "package_arch=$PACKAGE_ARCH" >> $GITHUB_OUTPUT
-        echo "package_path=$PACKAGE_DIR/$PACKAGE_FILE" >> $GITHUB_OUTPUT
         
-        # List all built packages for debugging
-        find bin -name "*.ipk" -type f | sort
-        
-    - name: Create release info
-      run: |
-        cd openwrt
+        # Create package info
         cat > package_info.txt << EOF
-        Package: ipv6-relay-fix
-        Version: $(grep PKG_VERSION package/network/ipv6/ipv6-relay-fix/Makefile | cut -d'=' -f2)
-        Release: $(grep PKG_RELEASE package/network/ipv6/ipv6-relay-fix/Makefile | cut -d'=' -f2)
-        Architecture: ${{ steps.find-packages.outputs.package_arch }}
-        OpenWrt Version: ${{ env.OPENWRT_VERSION }}
-        Built on: $(date)
-        Commit: ${{ github.sha }}
+        📦 IPv6 Relay Fix Package for ARM Cortex-A53
         
-        Installation:
-        scp ${{ steps.find-packages.outputs.package_file }} root@router:/tmp/
-        ssh root@router "opkg install /tmp/${{ steps.find-packages.outputs.package_file }}"
+        Package: $PACKAGE_NAME
+        Architecture: aarch64_cortex-a53
+        OpenWrt Version: master ($(git -C . rev-parse --short HEAD))
+        Built: $(date)
         
-        Configuration:
+        🚀 Installation:
+        scp $PACKAGE_NAME root@192.168.1.1:/tmp/
+        ssh root@192.168.1.1 "opkg install /tmp/$PACKAGE_NAME"
+        
+        ⚙️ Configuration:
         uci set ipv6-relay-fix.global.enabled='1'
         uci commit ipv6-relay-fix
         /etc/init.d/ipv6-relay-fix restart
+        
+        📋 Compatible devices:
+        - Pine64 Plus A64
+        - Orange Pi series (A64/H5)
+        - Banana Pi M64
+        - NanoPi A64
+        - Other ARM Cortex-A53 based devices
         EOF
         
-    - name: Upload IPK package
+        echo "✅ Package built successfully: $PACKAGE_NAME"
+        
+    - name: Upload package artifact
       uses: actions/upload-artifact@v3
       with:
-        name: ipv6-relay-fix-${{ env.TARGET_ARCH }}-${{ env.OPENWRT_VERSION }}
+        name: ipv6-relay-fix-aarch64-cortex-a53
         path: |
-          openwrt/${{ steps.find-packages.outputs.package_path }}
+          openwrt/${{ steps.package.outputs.package_path }}
           openwrt/package_info.txt
         retention-days: 30
         
-    - name: Upload to release (if tag)
+    - name: Create release on tag
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          openwrt/${{ steps.find-packages.outputs.package_path }}
+          openwrt/${{ steps.package.outputs.package_path }}
           openwrt/package_info.txt
-        name: IPv6 Relay Fix ${{ github.ref_name }}
+        name: IPv6 Relay Fix ${{ github.ref_name }} (ARM Cortex-A53)
         body: |
-          ## IPv6 Relay Fix Package
+          ## IPv6 Relay Fix Package - ARM Cortex-A53
           
-          **Target Architecture:** ${{ env.TARGET_ARCH }}  
-          **OpenWrt Version:** ${{ env.OPENWRT_VERSION }}  
-          **Package:** `${{ steps.find-packages.outputs.package_file }}`
+          **Architecture:** aarch64_cortex-a53  
+          **OpenWrt Version:** master  
+          **Package:** `${{ steps.package.outputs.package_file }}`
           
-          ### Installation
+          ### 🎯 Compatible Devices
+          - Pine64 Plus A64, Orange Pi series (A64/H5)
+          - Banana Pi M64, NanoPi A64
+          - Other ARM Cortex-A53 based SBCs
+          
+          ### 📥 Quick Install
           ```
-          # Upload to router
-          scp ${{ steps.find-packages.outputs.package_file }} root@192.168.1.1:/tmp/
+          # Upload to device
+          scp ${{ steps.package.outputs.package_file }} root@192.168.1.1:/tmp/
           
-          # Install on router
+          # Install and configure
           ssh root@192.168.1.1
-          opkg install /tmp/${{ steps.find-packages.outputs.package_file }}
-          
-          # Configure and start
+          opkg install /tmp/${{ steps.package.outputs.package_file }}
           uci set ipv6-relay-fix.global.enabled='1'
           uci commit ipv6-relay-fix
           /etc/init.d/ipv6-relay-fix restart
           ```
-          
-          ### Features
-          - Automatic IPv6 relay mode configuration
-          - Route table correction for downstream devices
-          - Learning route conflict resolution
-          - Hotplug-based route maintenance
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build-matrix:
-    if: github.event_name == 'workflow_dispatch'
-    strategy:
-      matrix:
-        arch: [x86_64, aarch64_generic, arm_cortex-a9, mips_24kc]
-        openwrt: [v23.05.2, v22.03.6]
-    runs-on: ubuntu-22.04
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      
-    - name: Build for ${{ matrix.arch }} on ${{ matrix.openwrt }}
-      uses: ./.github/workflows/build-ipv6-relay-fix.yml
-      with:
-        openwrt_version: ${{ matrix.openwrt }}
-        target_arch: ${{ matrix.arch }}
